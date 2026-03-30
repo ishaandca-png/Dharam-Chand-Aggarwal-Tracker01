@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sender - Location Tracker</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
+</head>
+<body style="text-align: center; font-family: sans-serif; padding-top: 50px;">
+
+    <h2>Sender Mode: <span id="userId">User_1</span></h2>
+    <button id="toggleBtn" style="padding: 20px; font-size: 1.2rem; cursor: pointer;">Start Tracking</button>
+    <p id="status">Status: Offline</p>
+
+    <script>
+        // --- CONFIGURATION ---
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            databaseURL: "YOUR_DATABASE_URL",
+            projectId: "YOUR_PROJECT_ID",
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+        
+        const SENDER_ID = "User_1"; // Change this for each of the 5 senders
+        document.getElementById('userId').innerText = SENDER_ID;
+
+        let watchId = null;
+        let wakeLock = null;
+        const btn = document.getElementById('toggleBtn');
+        const status = document.getElementById('status');
+
+        // --- WAKE LOCK (Keep screen on) ---
+        async function requestWakeLock() {
+            try {
+                wakeLock = await navigator.wakeLock.request('screen');
+            } catch (err) {
+                console.log(`${err.name}, ${err.message}`);
+            }
+        }
+
+        function startTracking() {
+            if ("geolocation" in navigator) {
+                requestWakeLock();
+                watchId = navigator.geolocation.watchPosition((pos) => {
+                    const { latitude, longitude } = pos.coords;
+                    db.ref('locations/' + SENDER_ID).set({
+                        lat: latitude,
+                        lng: longitude,
+                        active: true,
+                        timestamp: Date.now()
+                    });
+                    status.innerText = `Status: Tracking... (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`;
+                }, (err) => console.error(err), { enableHighAccuracy: true });
+                
+                btn.innerText = "Stop Tracking";
+                btn.style.backgroundColor = "#ff4d4d";
+            }
+        }
+
+        function stopTracking() {
+            if (watchId) navigator.geolocation.clearWatch(watchId);
+            if (wakeLock) wakeLock.release().then(() => wakeLock = null);
+            db.ref('locations/' + SENDER_ID + '/active').set(false);
+            status.innerText = "Status: Offline";
+            btn.innerText = "Start Tracking";
+            btn.style.backgroundColor = "";
+        }
+
+        btn.addEventListener('click', () => {
+            if (btn.innerText === "Start Tracking") startTracking();
+            else stopTracking();
+        });
+    </script>
+</body>
+</html>
