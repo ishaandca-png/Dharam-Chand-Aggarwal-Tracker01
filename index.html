@@ -1,76 +1,103 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Sender - Location Tracker</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
+    <title>SENDER - Multi-Tracker Pro</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; font-family: sans-serif; background: #1a1a1a; color: white; text-align: center; }
+        #map { height: 50vh; width: 100%; }
+        .controls { padding: 25px; }
+        #mainBtn { 
+            width: 100%; padding: 20px; font-size: 1.3rem; border: none; border-radius: 50px; 
+            background: #007bff; color: white; font-weight: bold; cursor: pointer; transition: 0.3s;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+        .active-btn { background: #dc3545 !important; }
+        #status { margin-top: 15px; font-size: 0.9rem; color: #aaa; }
+    </style>
 </head>
-<body style="text-align: center; font-family: sans-serif; padding-top: 50px;">
+<body>
 
-    <h2>Sender Mode: <span id="userId">User_1</span></h2>
-    <button id="toggleBtn" style="padding: 20px; font-size: 1.2rem; cursor: pointer;">Start Tracking</button>
-    <p id="status">Status: Offline</p>
+<div id="map"></div>
+<div class="controls">
+    <button id="mainBtn" onclick="toggleTracking()">START TRACKING</button>
+    <div id="status">Ready. ID: <span id="displayId">...</span></div>
+</div>
 
-    <script>
-        // --- CONFIGURATION ---
-        const firebaseConfig = {
-            apiKey: "AIzaSyBEhnGY-1nQ9lM6dcCTdhvZBE5KcrC75iQ",
-            databaseURL: "https://staff-tracker-20023-default-rtdb.firebaseio.com",
-            projectId: "staff-tracker-20023",
-        };
-        firebase.initializeApp(firebaseConfig);
-        const db = firebase.database();
-        
-        const SENDER_ID = "User_1"; // Change this for each of the 5 senders
-        document.getElementById('userId').innerText = SENDER_ID;
+<audio id="silentAudio" loop><source src="https://raw.githubusercontent.com/anars/blank-audio/master/10-seconds-of-silence.mp3" type="audio/mp3"></audio>
 
-        let watchId = null;
-        let wakeLock = null;
-        const btn = document.getElementById('toggleBtn');
-        const status = document.getElementById('status');
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
 
-        // --- WAKE LOCK (Keep screen on) ---
-        async function requestWakeLock() {
-            try {
-                wakeLock = await navigator.wakeLock.request('screen');
-            } catch (err) {
-                console.log(`${err.name}, ${err.message}`);
+<script>
+    const firebaseConfig = {
+        apiKey: "AIzaSyBEhnGY-1nQ9lM6dcCTdhvZBE5KcrC75iQ",
+        databaseURL: "https://staff-tracker-20023-default-rtdb.firebaseio.com",
+        projectId: "staff-tracker-20023"
+    };
+
+    // 1. Setup Identity
+    const urlParams = new URLSearchParams(window.location.search);
+    const userId = urlParams.get('id') || "User_" + Math.floor(Math.random() * 1000);
+    document.getElementById('displayId').innerText = userId;
+
+    // 2. Initialize
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+    let map = L.map('map').setView([0, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+    let marker, watchId = null, wakeLock = null;
+
+    async function toggleTracking() {
+        const btn = document.getElementById('mainBtn');
+        const audio = document.getElementById('silentAudio');
+
+        if (watchId === null) {
+            // START
+            btn.innerText = "STOP TRACKING";
+            btn.classList.add('active-btn');
+            audio.play(); // Start silent loop to keep process alive
+
+            if ('wakeLock' in navigator) {
+                try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
             }
+
+            watchId = navigator.geolocation.watchPosition(success, error, {
+                enableHighAccuracy: true, timeout: 15000, maximumAge: 0
+            });
+        } else {
+            // STOP
+            btn.innerText = "START TRACKING";
+            btn.classList.remove('active-btn');
+            audio.pause();
+            navigator.geolocation.clearWatch(watchId);
+            watchId = null;
+            if (wakeLock) { wakeLock.release(); wakeLock = null; }
+            db.ref('live_location/' + userId).update({ status: 'offline' });
+        }
+    }
+
+    function success(pos) {
+        const { latitude, longitude, accuracy } = pos.coords;
+        document.getElementById('status').innerText = `Live (Acc: ${Math.round(accuracy)}m)`;
+
+        if (!marker) {
+            marker = L.marker([latitude, longitude]).addTo(map);
+            map.setView([latitude, longitude], 16);
+        } else {
+            marker.setLatLng([latitude, longitude]);
         }
 
-        function startTracking() {
-            if ("geolocation" in navigator) {
-                requestWakeLock();
-                watchId = navigator.geolocation.watchPosition((pos) => {
-                    const { latitude, longitude } = pos.coords;
-                    db.ref('locations/' + SENDER_ID).set({
-                        lat: latitude,
-                        lng: longitude,
-                        active: true,
-                        timestamp: Date.now()
-                    });
-                    status.innerText = `Status: Tracking... (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`;
-                }, (err) => console.error(err), { enableHighAccuracy: true });
-                
-                btn.innerText = "Stop Tracking";
-                btn.style.backgroundColor = "#ff4d4d";
-            }
-        }
-
-        function stopTracking() {
-            if (watchId) navigator.geolocation.clearWatch(watchId);
-            if (wakeLock) wakeLock.release().then(() => wakeLock = null);
-            db.ref('locations/' + SENDER_ID + '/active').set(false);
-            status.innerText = "Status: Offline";
-            btn.innerText = "Start Tracking";
-            btn.style.backgroundColor = "";
-        }
-
-        btn.addEventListener('click', () => {
-            if (btn.innerText === "Start Tracking") startTracking();
-            else stopTracking();
+        db.ref('live_location/' + userId).set({
+            lat: latitude, lng: longitude, time: Date.now(), status: 'online'
         });
-    </script>
+    }
+
+    function error(err) {
+        document.getElementById('status').innerText = "GPS Error: " + err.message;
+    }
+</script>
 </body>
 </html>
